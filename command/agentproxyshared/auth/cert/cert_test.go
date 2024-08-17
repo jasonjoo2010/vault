@@ -9,6 +9,7 @@ import (
 	"path"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/api"
@@ -28,6 +29,7 @@ func TestCertAuthMethod_Authenticate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer method.Shutdown()
 
 	client, err := api.NewClient(nil)
 	if err != nil {
@@ -65,6 +67,7 @@ func TestCertAuthMethod_AuthClient_withoutCerts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer method.Shutdown()
 
 	client, err := api.NewClient(api.DefaultConfig())
 	if err != nil {
@@ -108,6 +111,7 @@ func TestCertAuthMethod_AuthClient_withCerts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer method.Shutdown()
 
 	client, err := api.NewClient(nil)
 	if err != nil {
@@ -153,10 +157,11 @@ func TestCertAuthMethod_AuthClient_withCertsReload(t *testing.T) {
 		Logger:    hclog.NewNullLogger(),
 		MountPath: "cert-test",
 		Config: map[string]interface{}{
-			"name":        "with-certs-reloaded",
-			"client_cert": clientCert.Name(),
-			"client_key":  clientKey.Name(),
-			"reload":      true,
+			"name":          "with-certs-reloaded",
+			"client_cert":   clientCert.Name(),
+			"client_key":    clientKey.Name(),
+			"reload":        true,
+			"reload_period": 1,
 		},
 	}
 
@@ -164,6 +169,7 @@ func TestCertAuthMethod_AuthClient_withCertsReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer method.Shutdown()
 
 	client, err := api.NewClient(nil)
 	if err != nil {
@@ -187,5 +193,49 @@ func TestCertAuthMethod_AuthClient_withCertsReload(t *testing.T) {
 
 	if reloadedClient == clientToUse {
 		t.Fatal("expected client from AuthClient to return back a new client")
+	}
+
+	method.CredSuccess()
+	ctx, cancel := context.WithTimeout(context.TODO(), 3*time.Second)
+	inst := method.(*certMethod)
+	inst.clientCert = "./test-fixtures/keys/cert1.pem"
+	select {
+	case <-ctx.Done():
+	case <-method.NewCreds():
+		cancel()
+		t.Fatal("malformed cert should not be observed as a change")
+	}
+
+	inst.clientKey = "./test-fixtures/keys/key1.pem"
+	ctx, cancel = context.WithTimeout(context.TODO(), 3*time.Second)
+	select {
+	case <-ctx.Done():
+		t.Fatal("failed to watch the cert change: timeout")
+	case <-method.NewCreds():
+		cancel()
+	}
+}
+
+func TestHashCert(t *testing.T) {
+	c := &certMethod{
+		logger: hclog.NewNullLogger(),
+	}
+	sum, err := c.hashCert("", "", "")
+	if sum != "" || err == nil {
+		t.Fatal("hashCert should fail with empty file paths")
+	}
+
+	sum, err = c.hashCert("./test-fixtures/keys/cert.pem", "./test-fixtures/keys/key.pem", "./test-fixtures/root/rootcacert.pem")
+	if err != nil {
+		t.Fatal("hashCert shouldn't fail with valid cert/key pair")
+	}
+	sum1 := sum
+
+	sum, err = c.hashCert("./test-fixtures/root/rootcacert.pem", "./test-fixtures/root/rootcakey.pem", "./test-fixtures/root/rootcacert.pem")
+	if err != nil {
+		t.Fatal("hashCert shouldn't fail with valid cert/key pair")
+	}
+	if sum == sum1 {
+		t.Fatal("hashCert shouldn't return the same checksum between different pairs", "./test-fixtures/root/rootcacert.pem")
 	}
 }
