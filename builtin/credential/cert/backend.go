@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/vault/sdk/helper/locksutil"
 	"github.com/hashicorp/vault/sdk/helper/ocsp"
 	"github.com/hashicorp/vault/sdk/logical"
+	"github.com/puzpuzpuz/xsync/v3"
 )
 
 const (
@@ -70,6 +71,7 @@ func Backend() *backend {
 	}
 
 	b.crlUpdateMutex = &sync.RWMutex{}
+	b.crlsCache = xsync.NewMapOf[string, bool]()
 	return &b
 }
 
@@ -85,6 +87,7 @@ type backend struct {
 	MapCertId *framework.PathMap
 
 	crls            map[string]CRLInfo
+	crlsCache       *xsync.MapOf[string, bool]
 	crlUpdateMutex  *sync.RWMutex
 	ocspClientMutex sync.RWMutex
 	ocspClient      *ocsp.Client

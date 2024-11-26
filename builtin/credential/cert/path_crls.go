@@ -100,6 +100,29 @@ func (b *backend) lockThenpopulateCRLs(ctx context.Context, storage logical.Stor
 	return b.populateCRLs(ctx, storage)
 }
 
+func (b *backend) updateCRLCache() {
+	keys := make(map[string]bool, b.crlsCache.Size())
+	b.crlsCache.Range(func(key string, value bool) bool {
+		keys[key] = true
+		return true
+	})
+
+	for _, crl := range b.crls {
+		if crl.Serials == nil {
+			continue
+		}
+
+		for k := range crl.Serials {
+			b.crlsCache.Store(k, true)
+			delete(keys, k)
+		}
+	}
+
+	for k := range keys {
+		b.crlsCache.Delete(k)
+	}
+}
+
 func (b *backend) populateCRLs(ctx context.Context, storage logical.Storage) error {
 	if b.crls != nil {
 		return nil
@@ -133,6 +156,7 @@ func (b *backend) populateCRLs(ctx context.Context, storage logical.Storage) err
 		b.crls[key] = crlInfo
 	}
 
+	b.updateCRLCache()
 	return nil
 }
 
@@ -144,7 +168,7 @@ func (b *backend) findSerialInCRLs(serial *big.Int) map[string]RevokedSerialInfo
 		if crl.Serials == nil {
 			continue
 		}
-		if info, ok := crl.Serials[serial.String()]; ok {
+		if info, ok := crl.Serials[serial.Text(16)]; ok {
 			ret[key] = info
 		}
 	}
@@ -301,7 +325,7 @@ func (b *backend) setCRL(ctx context.Context, storage logical.Storage, certList 
 
 	if certList != nil {
 		for _, revokedCert := range certList.TBSCertList.RevokedCertificates {
-			crlInfo.Serials[revokedCert.SerialNumber.String()] = RevokedSerialInfo{}
+			crlInfo.Serials[revokedCert.SerialNumber.Text(16)] = RevokedSerialInfo{}
 		}
 	}
 
